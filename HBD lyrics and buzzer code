@@ -79,8 +79,50 @@ void drawLyricsAt(float centerPos) {
   display.display();
 }
 
+// Draws cake + balloons scene. balloonsPopped=true shows a "pop burst" instead of round balloons.
+void drawCakeScene(bool balloonsPopped) {
+  display.clearDisplay();
+
+  // ---- Cake ----
+  display.fillRect(34, 52, 60, 3, SSD1306_WHITE);       // Plate
+  display.fillRect(39, 40, 50, 12, SSD1306_WHITE);      // Bottom tier
+  display.fillRect(49, 30, 30, 10, SSD1306_WHITE);      // Top tier
+  for (int x = 39; x < 89; x += 6) {                    // Frosting drips
+    display.drawLine(x, 40, x + 3, 44, SSD1306_BLACK);
+  }
+  display.fillRect(62, 18, 3, 12, SSD1306_WHITE);       // Candle
+  display.fillCircle(63, 14, 3, SSD1306_WHITE);         // Flame
+
+  // ---- Balloons ----
+  int leftX = 16, rightX = 112, balloonY = 18, balloonR = 9;
+
+  if (!balloonsPopped) {
+    display.fillCircle(leftX, balloonY, balloonR, SSD1306_WHITE);
+    display.drawLine(leftX, balloonY + balloonR, leftX, balloonY + balloonR + 14, SSD1306_WHITE);
+    display.fillCircle(rightX, balloonY, balloonR, SSD1306_WHITE);
+    display.drawLine(rightX, balloonY + balloonR, rightX, balloonY + balloonR + 14, SSD1306_WHITE);
+  } else {
+    for (int a = 0; a < 360; a += 45) {
+      float rad = a * PI / 180.0;
+      int x1 = leftX + cos(rad) * 4;
+      int y1 = balloonY + sin(rad) * 4;
+      int x2 = leftX + cos(rad) * (balloonR + 4);
+      int y2 = balloonY + sin(rad) * (balloonR + 4);
+      display.drawLine(x1, y1, x2, y2, SSD1306_WHITE);
+
+      x1 = rightX + cos(rad) * 4;
+      y1 = balloonY + sin(rad) * 4;
+      x2 = rightX + cos(rad) * (balloonR + 4);
+      y2 = balloonY + sin(rad) * (balloonR + 4);
+      display.drawLine(x1, y1, x2, y2, SSD1306_WHITE);
+    }
+  }
+
+  display.display();
+}
+
 // Plays ONE note. If startsNewLine, the scroll slide happens *during* this
-// note's own duration instead of adding extra delay — this is what removes the lag.
+// note's own duration instead of adding extra delay — this removes the lag.
 void playNote(int pitch, int duration, int lineIndex, bool startsNewLine) {
   unsigned long startTime = millis();
   float fromPos = currentDisplayIndex;
@@ -95,14 +137,14 @@ void playNote(int pitch, int duration, int lineIndex, bool startsNewLine) {
       float progress = (float)(millis() - startTime) / (float)slideDuration;
       if (progress > 1.0) progress = 1.0;
       drawLyricsAt(fromPos + (toPos - fromPos) * progress);
-      delay(15); // frame pacing only, still inside the note's own time budget
+      delay(15);
     }
     currentDisplayIndex = toPos;
-    drawLyricsAt(currentDisplayIndex); // settle on final centered frame
+    drawLyricsAt(currentDisplayIndex);
   }
 
   long remaining = (long)duration - (long)(millis() - startTime);
-  if (remaining > 0) delay(remaining); // finish out the note's duration if slide was shorter
+  if (remaining > 0) delay(remaining);
 
   ledcWriteTone(BUZZER_PIN, 0);
   digitalWrite(LED_PIN, LOW); // LED off = gap between notes
@@ -138,20 +180,16 @@ void loop() {
     }
   }
 
-  // Final "YOU!" screen, centered, LED flash for effect
-  display.clearDisplay();
-  display.setTextSize(3);
-  display.setTextColor(SSD1306_WHITE);
-  const char* finalText = "YOU!";
-  int16_t x1, y1; uint16_t w, h;
-  display.getTextBounds(finalText, 0, 0, &x1, &y1, &w, &h);
-  display.setCursor((SCREEN_WIDTH - w) / 2, (SCREEN_HEIGHT - h) / 2);
-  display.print(finalText);
-  display.display();
+  // Final Cake & Balloons screen
+  drawCakeScene(false);
 
   for (int i = 0; i < 5; i++) {
-    digitalWrite(LED_PIN, HIGH); delay(150);
-    digitalWrite(LED_PIN, LOW);  delay(150);
+    digitalWrite(LED_PIN, HIGH);
+    drawCakeScene(true);   // balloons "pop"
+    delay(150);
+    digitalWrite(LED_PIN, LOW);
+    drawCakeScene(false);  // balloons re-appear
+    delay(150);
   }
   delay(4000);
 }
