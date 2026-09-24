@@ -5,14 +5,14 @@
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 #define OLED_RESET    -1
-#define SCREEN_ADDRESS 0x3C // Common I2C address for SSD1306 displays
+#define SCREEN_ADDRESS 0x3C
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
-// Pin Definition based on your wiring
 #define BUZZER_PIN 4
+#define LED_PIN 2   // onboard blue LED on most ESP32 dev boards (change if yours differs)
 
-// Musical Note Frequencies (in Hz)
+// ---- Notes ----
 #define NOTE_C4  262
 #define NOTE_D4  294
 #define NOTE_E4  330
@@ -22,88 +22,136 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 #define NOTE_AS4 466
 #define NOTE_C5  523
 
-// Note durations (ms)
-#define Q 400 // Quarter note
-#define E 200 // Eighth note
-#define H 800 // Half note
+#define Q 400
+#define E 200
+#define H 800
 
-struct Note {
-  int pitch;
-  int duration;
-};
+struct Note { int pitch; int duration; };
 
-// Happy Birthday Melody
 Note melody[] = {
-  // Line 1: "Happy Birthday to You"
   {NOTE_C4, E}, {NOTE_C4, E}, {NOTE_D4, Q}, {NOTE_C4, Q}, {NOTE_F4, Q}, {NOTE_E4, H},
-  // Line 2: "Happy Birthday to You"
   {NOTE_C4, E}, {NOTE_C4, E}, {NOTE_D4, Q}, {NOTE_C4, Q}, {NOTE_G4, Q}, {NOTE_F4, H},
-  // Line 3: "Happy Birthday Dear Friend"
   {NOTE_C4, E}, {NOTE_C4, E}, {NOTE_C5, Q}, {NOTE_A4, Q}, {NOTE_F4, Q}, {NOTE_E4, Q}, {NOTE_D4, H},
-  // Line 4: "Happy Birthday to You"
   {NOTE_AS4, E}, {NOTE_AS4, E}, {NOTE_A4, Q}, {NOTE_F4, Q}, {NOTE_G4, Q}, {NOTE_F4, H}
 };
 
-const char* lyrics[] = {
-  "Happy Birthday\nto You!",
-  "Happy Birthday\nto You!",
-  "Happy Birthday\nDear Friend!",
-  "Happy Birthday\nto You!"
+const char* lyricsLines[] = {
+  "Happy", "Birthday", "to You!",
+  "Happy", "Birthday", "to You!",
+  "Happy", "Birthday", "Dear Friend!",
+  "Happy", "Birthday", "to You!"
 };
+const int NUM_LINES = 12;
+int notesPerSubline[NUM_LINES] = { 2,2,2,  2,2,2,  2,2,3,  2,2,2 };
 
-// Notes per lyric phrase
-int notesPerLine[] = {6, 6, 7, 6};
+#define LINE_HEIGHT 20
+#define CENTER_Y (SCREEN_HEIGHT / 2)
+#define TEXT_SIZE 2
 
-void showLyric(const char* text) {
+float currentDisplayIndex = -1; // fractional, starts above screen
+
+void drawLyricsAt(float centerPos) {
   display.clearDisplay();
-  display.setTextSize(2);
-  display.setTextColor(SSD1306_WHITE);
-  display.setCursor(0, 16);
-  display.println(text);
+  display.setTextSize(TEXT_SIZE);
+
+  for (int i = 0; i < NUM_LINES; i++) {
+    float relative = i - centerPos;
+    if (relative < -1.5 || relative > 1.5) continue;
+
+    int y = CENTER_Y + (int)round(relative * LINE_HEIGHT) - (8 * TEXT_SIZE) / 2;
+    if (y < -16 || y > SCREEN_HEIGHT) continue;
+
+    int16_t x1, y1; uint16_t w, h;
+    display.getTextBounds(lyricsLines[i], 0, 0, &x1, &y1, &w, &h);
+    int x = (SCREEN_WIDTH - w) / 2;
+
+    bool isActive = fabs(relative) < 0.4;
+    if (isActive) {
+      display.fillRect(0, y - 2, SCREEN_WIDTH, LINE_HEIGHT, SSD1306_WHITE);
+      display.setTextColor(SSD1306_BLACK);
+    } else {
+      display.setTextColor(SSD1306_WHITE);
+    }
+
+    display.setCursor(x, y);
+    display.print(lyricsLines[i]);
+  }
   display.display();
 }
 
-void setup() {
-  Wire.begin(21, 22); // SDA = GPIO21, SCL = GPIO22
+// Plays ONE note. If startsNewLine, the scroll slide happens *during* this
+// note's own duration instead of adding extra delay — this is what removes the lag.
+void playNote(int pitch, int duration, int lineIndex, bool startsNewLine) {
+  unsigned long startTime = millis();
+  float fromPos = currentDisplayIndex;
+  float toPos = (float)lineIndex;
+  unsigned long slideDuration = startsNewLine ? min((unsigned long)duration, 220UL) : 0;
 
-  if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
-    for(;;); // Loop infinitely if display fails
+  ledcWriteTone(BUZZER_PIN, pitch);
+  digitalWrite(LED_PIN, HIGH); // LED on = note sounding
+
+  if (startsNewLine) {
+    while (millis() - startTime < slideDuration) {
+      float progress = (float)(millis() - startTime) / (float)slideDuration;
+      if (progress > 1.0) progress = 1.0;
+      drawLyricsAt(fromPos + (toPos - fromPos) * progress);
+      delay(15); // frame pacing only, still inside the note's own time budget
+    }
+    currentDisplayIndex = toPos;
+    drawLyricsAt(currentDisplayIndex); // settle on final centered frame
   }
-  
+
+  long remaining = (long)duration - (long)(millis() - startTime);
+  if (remaining > 0) delay(remaining); // finish out the note's duration if slide was shorter
+
+  ledcWriteTone(BUZZER_PIN, 0);
+  digitalWrite(LED_PIN, LOW); // LED off = gap between notes
+  delay(50);
+}
+
+void setup() {
+  Wire.begin(21, 22);
+
+  if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    for (;;);
+  }
+
   display.clearDisplay();
   display.display();
-  
-  // ESP32 LEDC PWM setup for buzzer pin
-  ledcAttach(BUZZER_PIN, 2000, 8); // Attach pin with default 2000Hz frequency, 8-bit resolution
+
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
+
+  ledcAttach(BUZZER_PIN, 2000, 8);
 }
 
 void loop() {
   int noteIndex = 0;
+  currentDisplayIndex = -1;
 
-  for (int line = 0; line < 4; line++) {
-    showLyric(lyrics[line]);
-
-    for (int i = 0; i < notesPerLine[line]; i++) {
-      int pitch = melody[noteIndex].pitch;
-      int duration = melody[noteIndex].duration;
-
-      ledcWriteTone(BUZZER_PIN, pitch);
-      delay(duration);
-
-      ledcWriteTone(BUZZER_PIN, 0); // Pause between notes
-      delay(50);
-
+  for (int line = 0; line < NUM_LINES; line++) {
+    int n = notesPerSubline[line];
+    for (int i = 0; i < n; i++) {
+      bool first = (i == 0);
+      playNote(melody[noteIndex].pitch, melody[noteIndex].duration, line, first);
       noteIndex++;
     }
-    delay(300); // Brief pause between lyric lines
   }
 
-  // Display final screen
+  // Final "YOU!" screen, centered, LED flash for effect
   display.clearDisplay();
-  display.setTextSize(2);
-  display.setCursor(10, 24);
-  display.println("  YOU! ");
+  display.setTextSize(3);
+  display.setTextColor(SSD1306_WHITE);
+  const char* finalText = "YOU!";
+  int16_t x1, y1; uint16_t w, h;
+  display.getTextBounds(finalText, 0, 0, &x1, &y1, &w, &h);
+  display.setCursor((SCREEN_WIDTH - w) / 2, (SCREEN_HEIGHT - h) / 2);
+  display.print(finalText);
   display.display();
 
-  delay(5000); // Wait 5 seconds before repeating
+  for (int i = 0; i < 5; i++) {
+    digitalWrite(LED_PIN, HIGH); delay(150);
+    digitalWrite(LED_PIN, LOW);  delay(150);
+  }
+  delay(4000);
 }
