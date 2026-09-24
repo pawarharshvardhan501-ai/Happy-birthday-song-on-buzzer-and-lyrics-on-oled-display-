@@ -1,0 +1,109 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET    -1
+#define SCREEN_ADDRESS 0x3C // Common I2C address for SSD1306 displays
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+// Pin Definition based on your wiring
+#define BUZZER_PIN 4
+
+// Musical Note Frequencies (in Hz)
+#define NOTE_C4  262
+#define NOTE_D4  294
+#define NOTE_E4  330
+#define NOTE_F4  349
+#define NOTE_G4  392
+#define NOTE_A4  440
+#define NOTE_AS4 466
+#define NOTE_C5  523
+
+// Note durations (ms)
+#define Q 400 // Quarter note
+#define E 200 // Eighth note
+#define H 800 // Half note
+
+struct Note {
+  int pitch;
+  int duration;
+};
+
+// Happy Birthday Melody
+Note melody[] = {
+  // Line 1: "Happy Birthday to You"
+  {NOTE_C4, E}, {NOTE_C4, E}, {NOTE_D4, Q}, {NOTE_C4, Q}, {NOTE_F4, Q}, {NOTE_E4, H},
+  // Line 2: "Happy Birthday to You"
+  {NOTE_C4, E}, {NOTE_C4, E}, {NOTE_D4, Q}, {NOTE_C4, Q}, {NOTE_G4, Q}, {NOTE_F4, H},
+  // Line 3: "Happy Birthday Dear Friend"
+  {NOTE_C4, E}, {NOTE_C4, E}, {NOTE_C5, Q}, {NOTE_A4, Q}, {NOTE_F4, Q}, {NOTE_E4, Q}, {NOTE_D4, H},
+  // Line 4: "Happy Birthday to You"
+  {NOTE_AS4, E}, {NOTE_AS4, E}, {NOTE_A4, Q}, {NOTE_F4, Q}, {NOTE_G4, Q}, {NOTE_F4, H}
+};
+
+const char* lyrics[] = {
+  "Happy Birthday\nto You!",
+  "Happy Birthday\nto You!",
+  "Happy Birthday\nDear Friend!",
+  "Happy Birthday\nto You!"
+};
+
+// Notes per lyric phrase
+int notesPerLine[] = {6, 6, 7, 6};
+
+void showLyric(const char* text) {
+  display.clearDisplay();
+  display.setTextSize(2);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 16);
+  display.println(text);
+  display.display();
+}
+
+void setup() {
+  Wire.begin(21, 22); // SDA = GPIO21, SCL = GPIO22
+
+  if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    for(;;); // Loop infinitely if display fails
+  }
+  
+  display.clearDisplay();
+  display.display();
+  
+  // ESP32 LEDC PWM setup for buzzer pin
+  ledcAttach(BUZZER_PIN, 2000, 8); // Attach pin with default 2000Hz frequency, 8-bit resolution
+}
+
+void loop() {
+  int noteIndex = 0;
+
+  for (int line = 0; line < 4; line++) {
+    showLyric(lyrics[line]);
+
+    for (int i = 0; i < notesPerLine[line]; i++) {
+      int pitch = melody[noteIndex].pitch;
+      int duration = melody[noteIndex].duration;
+
+      ledcWriteTone(BUZZER_PIN, pitch);
+      delay(duration);
+
+      ledcWriteTone(BUZZER_PIN, 0); // Pause between notes
+      delay(50);
+
+      noteIndex++;
+    }
+    delay(300); // Brief pause between lyric lines
+  }
+
+  // Display final screen
+  display.clearDisplay();
+  display.setTextSize(2);
+  display.setCursor(10, 24);
+  display.println("  YOU! ");
+  display.display();
+
+  delay(5000); // Wait 5 seconds before repeating
+}
